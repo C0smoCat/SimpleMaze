@@ -1,0 +1,690 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Simple maze</title>
+    <style>
+        .menuItem {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            width: 12vw;
+            cursor: pointer;
+        }
+        .menuItem a {
+            font-size: 2vmin
+        }
+    </style>
+    <script type="text/javascript">
+        'use strict';
+        let lastUpd;
+        let canv;
+        let gpower = 1.00;
+
+        let targetFPS = 60;
+        let backgroundColor = "#333";
+
+        let px = 1.5;
+        let py = 1.5;
+        let mx = 0;
+        let my = 0;
+        let scale = 10;
+        let wScale = 1;
+        let hScale = 1;
+        let playerSpeed = 5;
+        let map = undefined;
+        let godMode = false;
+        let flashpower = 2;
+        let count = 0;
+        let seened = 0;
+        let zz = 0;
+        let minimap = false;
+        let mapW = 101;
+        let mapH = 101;
+        let fx = undefined;
+        let drawPath = false;
+        let drawPathInterval = 1000;
+        let coins = 0;
+        let damageCost = 100;
+        let pathLength = 0;
+        let mousePress = false;
+        let touchPress = false;
+        let lbCoins;
+        let lbPercent;
+
+        window.onkeydown = function (evt) {
+            switch (evt.code) {
+                case "ArrowLeft":
+                case "KeyA":
+                    mx = Clamp(-1, 1, mx - 1);
+                    break;
+                case "ArrowUp":
+                case "KeyW":
+                    my = Clamp(-1, 1, my - 1);
+                    break;
+                case "ArrowDown":
+                case "KeyS":
+                    my = Clamp(-1, 1, my + 1);
+                    break;
+                case "ArrowRight":
+                case "KeyD":
+                    mx = Clamp(-1, 1, mx + 1);
+                    break;
+            }
+        };
+
+        window.onkeyup = function (evt) {
+            VirtualClick(evt.code);
+        };
+
+        function VirtualClick(btn) {
+            switch (btn) {
+                case "ArrowLeft":
+                case "KeyA":
+                    mx = Clamp(-1, 1, mx + 1);
+                    break;
+                case "ArrowUp":
+                case "KeyW":
+                    my = Clamp(-1, 1, my + 1);
+                    break;
+                case "ArrowDown":
+                case "KeyS":
+                    my = Clamp(-1, 1, my - 1);
+                    break;
+                case "ArrowRight":
+                case "KeyD":
+                    mx = Clamp(-1, 1, mx - 1);
+                    break;
+                case "KeyZ":
+                    minimap = false;
+                    scale = 400 / scale;
+                    UpdateZZ();
+                    break;
+                case "KeyO":
+                    godMode = !godMode;
+                    break;
+                case "KeyP":
+                    drawPath = !drawPath;
+                    break;
+                case "KeyR":
+                    if (coins >= 20) {
+                        flashpower += 0.5;
+                        coins -= 20;
+                        UpdateTitle();
+                    }
+                    break;
+                case "KeyT":
+                    if (coins >= 5) {
+                        pathLength += 2;
+                        coins -= 5;
+                        UpdateTitle();
+                    }
+                    break;
+                case "Space":
+                    if (map !== undefined &&
+                        map[Math.floor(px)] !== undefined &&
+                        map[Math.floor(px)][Math.floor(py)] !== undefined &&
+                        px !== undefined &&
+                        py !== undefined) {
+                        let bl = map[Math.floor(px)][Math.floor(py)];
+                        if (!bl.isWall && !bl.isDanger) {
+                            if (bl.isSeen) {
+                                bl.isSeen = false;
+                                coins++;
+                                UpdateTitle();
+                            } else if (coins >= 1) {
+                                bl.isSeen = true;
+                                coins--;
+                                UpdateTitle();
+                            }
+                        }
+                    }
+                    break;
+                case "KeyQ":
+                    minimap = !minimap;
+                    UpdateZZ();
+                    break;
+                case "KeyE":
+                    playerSpeed = 50 / playerSpeed;
+                    break;
+            }
+        }
+
+        window.onload = function () {
+            lastUpd = new Date().getTime();
+            canv = document.getElementById("canvas");
+            lbCoins = document.getElementById("lbCoins");
+            lbPercent = document.getElementById("lbPercent");
+
+            window.onresize = () => {
+                UpdateZZ();
+            };
+
+            // mobile input detect
+            let touchable = 'createTouch' in document;
+            if (touchable || true) {
+                canv.addEventListener('touchstart', onTouchStart, false);
+                canv.addEventListener('touchmove', onTouchMove, false);
+                canv.addEventListener('touchend', onTouchEnd, false);
+            } else {
+                canv.addEventListener('mousedown', onMouseDown, false);
+                canv.addEventListener('mousemove', onMouseMove, false);
+                canv.addEventListener('mouseup', onMouseUp, false);
+            }
+
+            document.body.style.backgroundColor = backgroundColor;
+
+            // map generation
+            map = GenMap(mapW, mapH, [], [], {x: 1, y: 1});
+            let t = [];
+            for (let x = 0; x < mapW; x++) {
+                t[x] = [];
+                for (let y = 0; y < mapH; y++) {
+                    t[x][y] = !map[x][y].isWall;
+                }
+            }
+            
+            //Search for right path
+            let truePath = Makeway([], 1, 1, t, fx);
+            truePath.push(fx.b);
+            t = undefined;
+
+            count = 0;
+            for (let x = 0; x < mapW; x++) {
+                for (let y = 0; y < mapH; y++) {
+                    if (map[x][y].isWall) {
+                        count++;
+                    }
+                }
+            }
+
+            let ctx = canv.getContext("2d");
+            UpdateZZ();
+
+            //Main loop
+            setInterval(function () {
+                let nTime = new Date().getTime();
+                let deltaTime = nTime - lastUpd;
+
+                ctx.fillStyle = backgroundColor;
+                ctx.fillRect(0, 0, canv.width, canv.height);
+
+                // Calculation of a new player position
+                let nx = px + Clamp(-0.3, 0.3, mx * playerSpeed * deltaTime / 1000);
+                let ny = py + Clamp(-0.3, 0.3, my * playerSpeed * deltaTime / 1000);
+
+                //Check for collision, map exit, etc.
+                if (nx >= 0 && nx < mapW && ny >= 0 && ny < mapH) {
+                    if (godMode) {
+                        px = nx;
+                        py = ny;
+                    } else if (map[Math.floor(nx)][Math.floor(ny)].isDanger && map[Math.floor(nx)][Math.floor(ny)].isWall) {
+                        map[Math.floor(nx)][Math.floor(ny)].isDanger = false;
+                        if (coins >= damageCost) {
+                            coins -= damageCost;
+                            UpdateTitle();
+                        } else {
+                            px = 1.5;
+                            py = 1.5;
+
+                            let thanos = [];
+                            for (let y = 0; y < mapH; y++) {
+                                for (let x = 0; x < mapW; x++) {
+                                    if (map[x][y].isSeen && map[x][y].isWall) {
+                                        thanos.push({x: x, y: y});
+                                    }
+                                }
+                            }
+                            thanos = Shuffle(thanos);
+                            for (let i = 0; i < seened / 2; i++) {
+                                map[thanos[i].x][thanos[i].y].isSeen = false;
+                                seened--;
+                            }
+                        }
+                    } else if (!map[Math.floor(nx)][Math.floor(ny)].isWall) {
+                        px = nx;
+                        py = ny;
+                    } else if (!map[Math.floor(nx)][Math.floor(py)].isWall) {
+                        px = nx;
+                    } else if (!map[Math.floor(px)][Math.floor(ny)].isWall) {
+                        py = ny;
+                    }
+                } else {
+                    //Map exit
+                    godMode = true;
+                    drawPath = true;
+                    px = nx;
+                    py = ny;
+                }
+
+                if (minimap) {
+                    //Draw in minimap mode
+                    let ox = 0;
+                    let oy = 0
+                    for (let x = 0; x < mapW; x++) {
+                        for (let y = 0; y < mapH; y++) {
+                            let mag = Math.sqrt((px - 0.5 - x) ** 2 + (py - 0.5 - y) ** 2);
+                            if (map[x][y].isWall) {
+                                if (mag <= flashpower) {
+                                    if (!map[x][y].isSeen) {
+                                        seened++;
+                                        map[x][y].isSeen = true;
+                                        UpdateTitle();
+                                    }
+                                    ctx.fillStyle = map[x][y].isDanger ? "red" : map[x][y].color;
+                                } else if (map[x][y].isSeen) {
+                                    ctx.fillStyle = map[x][y].isDanger ? "#faa" : "#aaa";
+                                } else if (godMode) {
+                                    ctx.fillStyle = map[x][y].isDanger ? "#faf" : "#aaf";
+                                } else {
+                                    continue;
+                                }
+                                let xx = Math.ceil(zz * x + ox);
+                                let yy = Math.ceil(zz * y + oy);
+                                ctx.fillRect(xx, yy, Math.ceil(zz), Math.ceil(zz));
+                            } else if (map[x][y].isSeen) {
+                                ctx.fillStyle = "#f70";
+                                let xx = zz * (x + 0.2) + ox;
+                                let yy = zz * (y + 0.2) + oy;
+                                ctx.fillRect(xx, yy, zz * 0.6, zz * 0.6);
+                            } else if ((godMode ? true : mag <= flashpower) && !map[x][y].isWall && map[x][y].isDanger) {
+                                if (Math.floor(px) === x && Math.floor(py) === y) {
+                                    map[x][y].isDanger = false;
+                                    coins++;
+                                    UpdateTitle();
+                                }
+                                ctx.fillStyle = "#fe2";
+                                let xx = zz * (x + 0.3) + ox;
+                                let yy = zz * (y + 0.3) + oy;
+                                ctx.fillRect(xx, yy, zz * 0.4, zz * 0.4);
+                            }
+                        }
+                    }
+                    ctx.fillStyle = "#afa";
+                    if (drawPath) {
+                        for (let i = 0; i < truePath.length-1; i++) {
+                            let mag = godMode ? 0 : Math.sqrt((px - 0.5 - truePath[i].x) ** 2 + (py - 0.5 - truePath[i].y) ** 2);
+                            if (mag < flashpower) {
+                                let xx = zz * (Lerp(truePath[i].x, truePath[i+1].x, nTime / drawPathInterval % 1) + 0.35);
+                                let yy = zz * (Lerp(truePath[i].y, truePath[i+1].y, nTime / drawPathInterval % 1) + 0.35);
+                                ctx.fillRect(xx, yy, zz * 0.3, zz * 0.3);
+                            }
+                        }
+                    } else {
+                        for (let i = 0; i < Math.min(pathLength, truePath.length-1); i++) {
+                            let xx = zz * (Lerp(truePath[i].x, truePath[i+1].x, nTime / drawPathInterval % 1) + 0.35);
+                            let yy = zz * (Lerp(truePath[i].y, truePath[i+1].y, nTime / drawPathInterval % 1) + 0.35);
+                            ctx.fillRect(xx, yy, zz * 0.3, zz * 0.3);
+                        }
+                    }
+                } else {
+                    //Draw in first-person mode
+                    let minX = Clamp(0, mapW - 1, Math.floor(px - wScale));
+                    let maxX = Clamp(0, mapW - 1, Math.floor(px + wScale));
+                    let minY = Clamp(0, mapH - 1, Math.floor(py - hScale));
+                    let maxY = Clamp(0, mapH - 1, Math.floor(py + hScale));
+                    for (let y = minY; y <= maxY; y++) {
+                        for (let x = minX; x <= maxX; x++) {
+                            let mag = Math.sqrt((px - 0.5 - x) ** 2 + (py - 0.5 - y) ** 2);
+                            if (map[x][y].isWall) {
+                                if (mag <= flashpower) {
+                                    if (!map[x][y].isSeen) {
+                                        seened++;
+                                        map[x][y].isSeen = true;
+                                        UpdateTitle();
+                                    }
+                                    ctx.fillStyle = map[x][y].isDanger ? "red" : map[x][y].color;
+                                } else if (map[x][y].isSeen) {
+                                    ctx.fillStyle = map[x][y].isDanger ? "#b66" : "#666";
+                                } else if (godMode) {
+                                    ctx.fillStyle = map[x][y].isDanger ? "#b6b" : "#66b";
+                                } else {
+                                    continue;
+                                }
+                                let xx = Math.ceil(canv.width / 2 + zz * (x - px));
+                                let yy = Math.ceil(canv.height / 2 + zz * (y - py));
+                                let ss = Math.ceil(zz);
+                                ctx.fillRect(xx, yy, ss, ss);
+                            } else if (map[x][y].isSeen) {
+                                ctx.fillStyle = "#f70";
+                                let xx = canv.width / 2 + zz * (x - px + 0.2);
+                                let yy = canv.height / 2 + zz * (y - py + 0.2);
+                                ctx.fillRect(xx, yy, zz * 0.6, zz * 0.6);
+                            } else if ((godMode ? true : mag <= flashpower) && map[x][y].isDanger) {
+                                if (Math.floor(px) === x && Math.floor(py) === y) {
+                                    map[x][y].isDanger = false;
+                                    coins++;
+                                    UpdateTitle();
+                                }
+                                ctx.fillStyle = "#fe2";
+                                let xx = canv.width / 2 + zz * (x - px + 0.3);
+                                let yy = canv.height / 2 + zz * (y - py + 0.3);
+                                let ss = zz * 0.4;
+                                ctx.fillRect(xx, yy, ss, ss);
+                            }
+                        }
+                    }
+
+                    ctx.fillStyle = "#afa";
+                    if (drawPath) {
+                        for (let i = 0; i < truePath.length - 1; i++) {
+                            let mag = godMode ? 0 : Math.sqrt((px - 0.5 - truePath[i].x) ** 2 + (py - 0.5 - truePath[i].y) ** 2);
+                            if (mag < flashpower) {
+                                let xx = canv.width / 2 + zz * (Lerp(truePath[i].x, truePath[i+1].x, nTime / drawPathInterval % 1) - px + 0.35);
+                                let yy = canv.height / 2 + zz * (Lerp(truePath[i].y, truePath[i+1].y, nTime / drawPathInterval % 1) - py + 0.35);
+                                ctx.fillRect(xx, yy, zz * 0.3, zz * 0.3);
+                            }
+                        }
+                    } else {
+                        for (let i = 0; i < Math.min(pathLength, truePath.length - 1); i++) {
+                            let xx = canv.width / 2 + zz * (Lerp(truePath[i].x, truePath[i+1].x, nTime / drawPathInterval % 1) - px + 0.35);
+                            let yy = canv.height / 2 + zz * (Lerp(truePath[i].y, truePath[i+1].y, nTime / drawPathInterval % 1) - py + 0.35);
+                            ctx.fillRect(xx, yy, zz * 0.3, zz * 0.3);
+                        }
+                    }
+                }
+                
+                //Drawing a direction indicator
+                if (mousePress || touchPress) {
+                    ctx.strokeStyle = "#eee6";
+                    ctx.beginPath();
+                    ctx.moveTo(canv.width / 2, canv.height / 2);
+                    ctx.lineTo(canv.width * UnLerp(-1,1,mx * Clamp(0,1,canv.height/canv.width)), canv.height * UnLerp(-1,1,my * Clamp(0,1,canv.width/canv.height)));
+                    ctx.lineWidth = 5;
+                    ctx.stroke();
+                }
+                
+                //Drawing player
+                ctx.lineWidth = 1;
+                ctx.fillStyle = godMode ? 'blue' : (coins >= damageCost) ? 'orange' : 'yellow';
+                ctx.strokeStyle = 'black';
+                ctx.beginPath();
+                let xx = 0;
+                let yy = 0;
+                if (minimap) {
+                    xx = zz * px;
+                    yy = zz * py;
+                } else {
+                    xx = canv.width / 2;
+                    yy = canv.height / 2;
+                }
+                ctx.arc(xx, yy, zz * 0.4, 0, 2 * Math.PI, true);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(xx, yy, zz * 0.4, 0, 2 * Math.PI, true);
+                ctx.stroke();
+                ctx.strokeStyle = 'white';
+                ctx.beginPath();
+                ctx.arc(xx, yy, zz * flashpower, 0, 2 * Math.PI, true);
+                ctx.stroke();
+
+                lastUpd = nTime;
+            }, 1000 / targetFPS);
+        };
+
+        function UpdateTitle() {
+            lbCoins.innerText = "$" + coins;
+            let p = (Math.round(seened * 10000 / count) / 100).toFixed(2);
+            lbPercent.innerText = p + "%";
+        }
+
+        function UpdateZZ() {
+            //Update game scale
+            let box = canv.getBoundingClientRect();
+            let w = box.left + box.right * gpower;
+            let h = box.top + box.bottom * gpower;
+            canv.width = w;
+            canv.height = h;
+
+            if (minimap) {
+                zz = Math.min(w / mapW, h / mapH);
+            } else {
+                zz = Math.min(w, h) / (scale * 2);
+            }
+
+            wScale = w / zz;
+            hScale = h / zz;
+        }
+
+        function GenMap(width, height, maze, walls, cp) {
+            //Map generation
+            height = height % 2 === 0 ? height + 1 : height;
+            width = width % 2 === 0 ? width + 1 : width;
+            let rc = Rand(0, 4);
+            for (let x = 0; x < width; x++) {
+                maze[x] = [];
+                for (let y = 0; y < height; y++) {
+                    let cl =
+                        rc === 0 ? "rgb(" + ((1 - x / width) * 255) + "," + (y / height * 255) + ",150)" :
+                            rc === 1 ? "rgb(" + ((1 - x / width) * 255) + ",150," + (y / height * 255) + ")" :
+                                rc === 2 ? "rgb(150," + ((1 - x / width) * 255) + "," + (y / height * 255) + ")" :
+                                    "rgb(" + (y / height * 255) + "," + ((1 - x / width) * 255) + ",150)";
+                    maze[x][y] = {
+                        isWall: true,
+                        color: cl,
+                        isDanger: Rand(0, 3) === 0,
+                        isSeen: false
+                    };
+                }
+            }
+
+            function amaze(x, y, addBlockWalls) {
+                maze[x][y].isWall = false;
+                if (addBlockWalls && valid(x, y + 1) && (maze[x][y + 1].isWall)) {
+                    walls.push({x: x, y: y + 1, b: {x: x, y: y}});
+                }
+                if (addBlockWalls && valid(x, y - 1) && (maze[x][y - 1].isWall)) {
+                    walls.push({x: x, y: y - 1, b: {x: x, y: y}});
+                }
+                if (addBlockWalls && valid(x + 1, y) && (maze[x + 1][y].isWall)) {
+                    walls.push({x: x + 1, y: y, b: {x: x, y: y}});
+                }
+                if (addBlockWalls && valid(x - 1, y) && (maze[x - 1][y].isWall)) {
+                    walls.push({x: x - 1, y: y, b: {x: x, y: y}});
+                }
+            }
+
+            function valid(x, y) {
+                return (0 <= y && y < height && 0 <= x && x < width);
+            }
+
+            amaze(cp.x, cp.y, true);
+            while (walls.length !== 0) {
+                let randomWall = walls[Math.floor(Math.random() * walls.length)];
+                let host = randomWall.b;
+                let opposite = {
+                    x: (host.x + (randomWall.x - host.x) * 2),
+                    y: (host.y + (randomWall.y - host.y) * 2)
+                };
+                if (valid(opposite.x, opposite.y)) {
+                    if (!maze[opposite.x][opposite.y].isWall) {
+                        walls.splice(walls.indexOf(randomWall), 1);
+                    } else {
+                        amaze(randomWall.x, randomWall.y, false);
+                        amaze(opposite.x, opposite.y, true);
+                    }
+                } else {
+                    walls.splice(walls.indexOf(randomWall), 1);
+                }
+            }
+            if ((mapW === mapH && Rand(0, 2) === 0) || mapW < mapH) {
+                let r = 1 + Rand(0, width / 2 - 1) * 2;
+                maze[r][height - 1].isWall = false;
+                fx = {x: r, y: height - 2, b: {x: r, y: height - 1}};
+            } else {
+                let r = 1 + Rand(0, height / 2 - 1) * 2;
+                maze[width - 1][r].isWall = false;
+                fx = {x: width - 2, y: r, b: {x: width - 1, y: r}};
+            }
+            return maze;
+        }
+
+        function Makeway(history, x, y, data, fx) {
+            history.push({x: x, y: y});
+            if (fx.x === x && fx.y === y) {
+                return history;
+            }
+
+            let t = undefined;
+
+            if (x < mapW - 2 && data[x + 1][y]) {
+                data[x + 1][y] = false;
+                let tmp = history.slice();
+                tmp.push({x: x + 1, y: y});
+                t = Makeway(tmp, x + 2, y, data, fx);
+            }
+            if (t !== undefined) {
+                return t;
+            }
+
+            if (x > 1 && data[x - 1][y]) {
+                data[x - 1][y] = false;
+                let tmp = history.slice();
+                tmp.push({x: x - 1, y: y});
+                t = Makeway(tmp, x - 2, y, data, fx);
+            }
+            if (t !== undefined) {
+                return t;
+            }
+
+            if (y < mapH - 2 && data[x][y + 1]) {
+                data[x][y + 1] = false;
+                let tmp = history.slice();
+                tmp.push({x: x, y: y + 1});
+                t = Makeway(tmp, x, y + 2, data, fx);
+            }
+            if (t !== undefined) {
+                return t;
+            }
+
+            if (y > 1 && data[x][y - 1]) {
+                data[x][y - 1] = false;
+                let tmp = history.slice();
+                tmp.push({x: x, y: y - 1});
+                t = Makeway(tmp, x, y - 2, data, fx);
+            }
+            return t;
+        }
+        
+        //Mobile input
+        function onTouchStart(event) {
+            event.preventDefault();
+            touchPress = true;
+            let box = canv.getBoundingClientRect();
+            let x = UnLerp(box.left, box.right, event.touches[0].clientX);
+            let y = UnLerp(box.top, box.bottom, event.touches[0].clientY);
+            let w = box.right - box.left;
+            let h = box.bottom - box.top;
+            mx = Clamp(-1, 1, Lerp(-1, 1, x) * Clamp(1,999,w/h));
+            my = Clamp(-1, 1, Lerp(-1, 1, y) * Clamp(1,999,h/w));
+        }
+
+        function onTouchMove(event) {
+            event.preventDefault();
+            if (touchPress) {
+                let box = canv.getBoundingClientRect();
+                let x = UnLerp(box.left, box.right, event.touches[0].clientX);
+                let y = UnLerp(box.top, box.bottom, event.touches[0].clientY);
+                let w = box.right - box.left;
+                let h = box.bottom - box.top;
+                mx = Clamp(-1, 1, Lerp(-1, 1, x) * Clamp(1,999,w/h));
+                my = Clamp(-1, 1, Lerp(-1, 1, y) * Clamp(1,999,h/w));
+            }
+        }
+
+        function onTouchEnd(event) {
+            touchPress = false;
+            mx = 0;
+            my = 0;
+        }
+        
+        //Mouse input
+        function onMouseDown(event) {
+            let box = canv.getBoundingClientRect();
+            let x = UnLerp(box.left, box.right, event.clientX);
+            let y = UnLerp(box.top, box.bottom, event.clientY);
+            let w = box.right - box.left;
+            let h = box.bottom - box.top;
+            mx = Clamp(-1, 1, Lerp(-1, 1, x) * Clamp(1,999,w/h));
+            my = Clamp(-1, 1, Lerp(-1, 1, y) * Clamp(1,999,h/w));
+            mousePress = true;
+        }
+
+        function onMouseMove(event) {
+            if (mousePress) {
+                let box = canv.getBoundingClientRect();
+                let x = UnLerp(box.left, box.right, event.clientX);
+                let y = UnLerp(box.top, box.bottom, event.clientY);
+                let w = box.right - box.left;
+                let h = box.bottom - box.top;
+                mx = Clamp(-1, 1, Lerp(-1, 1, x) * Clamp(1,999,w/h));
+                my = Clamp(-1, 1, Lerp(-1, 1, y) * Clamp(1,999,h/w));
+            }
+        }
+
+        function onMouseUp(event) {
+            mousePress = false;
+            mx = 0;
+            my = 0;
+        }
+        
+        //Some math functions
+        function RandArr(array) {
+            return array[Math.floor(Math.random() * (array.length))];
+        }
+
+        function Shuffle(arr) {
+            let j, temp;
+            for (let i = arr.length - 1; i > 0; i--) {
+                j = Math.floor(Math.random() * (i + 1));
+                temp = arr[j];
+                arr[j] = arr[i];
+                arr[i] = temp;
+            }
+            return arr;
+        }
+
+        /**
+         * @return {number}
+         */
+        function Rand(min, max) {
+            return Math.floor(min + Math.random() * (max - min));
+        }
+
+        function RandFloat(min, max) {
+            return min + Math.random() * (max - min);
+        }
+
+        function Lerp(a, b, t) {
+            return a + (b - a) * t;
+        }
+
+        /**
+         * @return {number}
+         */
+        function UnLerp(a, b, t) {
+            return (t - a) / (b - a);
+        }
+
+        function Clamp(a, b, t) {
+            return t < a ? a : t > b ? b : t;
+        }
+    </script>
+</head>
+<body style="margin:0;">
+<div id="main" style="display: grid; grid-template-rows: 5vh 95vh;">
+    <pre id="btns" style="display: flex; color: aqua; font-size: 3vmin; margin: 0; user-select: none; background: indigo">
+        <div id="lbCoins" class="menuItem"></div>
+        <div id="lbPercent" class="menuItem"></div>
+              <div id="btnR" class="menuItem" onclick="VirtualClick('KeyR');">R<a> $20</a></div>
+        <div id="btnT" class="menuItem" onclick="VirtualClick('KeyT');">T<a> $5</a></div>
+        <div id="btnSpace" class="menuItem" onclick="VirtualClick('Space');">SPACE<a> $1</a></div>
+        <div id="btnE" class="menuItem" onclick="VirtualClick('KeyE');">E<a> speed</a></div>        
+        <div id="btnZ" class="menuItem" onclick="VirtualClick('KeyZ');">Z<a> zoom</a></div>   
+             <div id="btnQ" class="menuItem" onclick="VirtualClick('KeyQ');">Q<a> map</a></div>        
+    </pre>
+    <canvas id="canvas" style="width:100vw; height:95vh;">
+    </canvas>
+</div>
+</body>
+</html>
